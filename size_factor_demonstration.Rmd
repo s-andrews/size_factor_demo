@@ -1,0 +1,231 @@
+---
+title: "Size Factor Normalisation"
+output:
+  html_document:
+    df_print: paged
+---
+
+Here we are going to look at how to perform a size factor normalisation in R.  This is one of the more robust ways to normalise a dataset which shows skewed distributions of differences between samples, and where traditional global normalisation might perform poorly.
+
+Setup
+=====
+
+We're going to use the tidyverse framework for loading, manipulating and plotting our data.
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+theme_set(theme_bw())
+```
+
+
+Loading Data
+============
+
+We've got some example data with three samples
+
+1. Wild type
+2. Knockout
+3. Rescue
+
+Let's see what it looks like.
+
+```{r message=FALSE}
+read_delim("size_factor_data.txt") -> data
+
+head(data)
+```
+
+We can plot out the relationships of the different samples to the WT
+
+```{r fig.width=5, fig.height=5}
+data %>%
+  ggplot(aes(x=WT, y=Rescue)) +
+  geom_point(size=1) +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline(slope=1, intercept=0, colour="red", linewidth=1)
+
+```
+
+For the WT vs Rescue we can see a similar overall structure to the data, but with a global offset which needs to be corrected.
+
+```{r fig.width=5, fig.height=5}
+data %>%
+  ggplot(aes(x=WT, y=KO)) +
+  geom_point(size=1) +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline(slope=1, intercept=0, colour="red", linewidth=1)
+
+```
+
+For the WT vs KO we can see many more changes, and a very substantial directional skew with pretty much all of the changes being higher in the KO.
+
+
+Global Normalisation
+====================
+
+A conventional normalisation is based on the sum of the values in each sample so let's try that and see what we get.
+
+We'll start by restructing the data to long format.
+
+```{r}
+data %>%
+  pivot_longer(
+    cols=-gene,
+    names_to="sample",
+    values_to="count"
+  ) -> data_long
+
+head(data_long)
+```
+
+
+Now, we'll divide the measures by the sum from the whole dataset.
+
+```{r}
+data_long %>%
+  group_by(sample) %>%
+  mutate(normalised = count/(sum(count)/1000000)) %>%
+  ungroup() %>%
+  select(-count) %>%
+  pivot_wider(
+    names_from=sample,
+    values_from=normalised
+  ) -> global
+ 
+```
+
+
+Let's see the revised scatterplots
+
+```{r fig.width=5, fig.height=5}
+global %>%
+  ggplot(aes(x=WT, y=Rescue)) +
+  geom_point(size=1) +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline(slope=1, intercept=0, colour="red", linewidth=1)
+
+```
+
+For the WT vs Rescue we can see the previous global offset is now fixed.
+
+```{r fig.width=5, fig.height=5}
+global %>%
+  ggplot(aes(x=WT, y=KO)) +
+  geom_point(size=1) +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline(slope=1, intercept=0, colour="red", linewidth=1)
+
+```
+
+
+With the heavily skewed data though we can see that the sum of the counts is not a good metric on which to normalise as it will tend to push the bulk of the points slightly below the diagonal.
+
+
+Size Factor Normalisation
+=========================
+
+We're going to try size factor normalisation.  We'll do this in distinct steps
+
+1. Create an "average" sample
+2. Calulate the difference from each point in each sample to the "average"
+3. Find the median difference for each sample
+4. Use this difference to correct the values in each sample
+
+
+Creating an average sample
+--------------------------
+
+We'll start by making an average sample.  We only want to do this for points which have a real measurement in all samples so we'll remove any gene which has zero counts in any condition.  We don't need data from all genes to calculate a size factor.
+
+```{r}
+data_long %>% 
+  group_by(gene) %>%
+  filter(all(count > 0)) %>%
+  summarise(
+    average_count=mean(count)
+  ) %>%
+  ungroup() -> average_sample
+
+head(average_sample)
+```
+
+Calculate differences to average
+--------------------------------
+
+```{r}
+data_long %>%
+  inner_join(average_sample) %>%
+  mutate(difference=count/average_count) -> differences
+
+head(differences)
+```
+
+Now we can look at the distribution of differences for each sample
+
+
+```{r}
+differences %>%
+  ggplot(aes(x=log2(difference), fill=sample)) +
+  geom_density(alpha=0.5) +
+  facet_grid(
+    rows=vars(sample)
+  ) +
+  coord_cartesian(xlim=c(-3,2))
+
+```
+
+Calcualte size factors
+----------------------
+
+The size factor is simply the median difference for each sample
+
+```{r}
+differences %>%
+  group_by(sample) %>%
+  summarise(size_factor=median(difference)) -> size_factors
+
+size_factors
+```
+
+Apply size factors to the data
+------------------------------
+
+We can now use the size factors as the correction factor for the full dataset.
+
+```{r}
+data_long %>%
+  left_join(size_factors) %>%
+  mutate(normalised=count/size_factor) %>%
+  select(-count, -size_factor) %>%
+  pivot_wider(
+    names_from=sample,
+    values_from=normalised
+  ) -> sf_normalised
+```
+
+We can plot the scatterplots one last time.
+
+
+```{r fig.width=5, fig.height=5}
+sf_normalised %>%
+  ggplot(aes(x=WT, y=Rescue)) +
+  geom_point(size=1) +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline(slope=1, intercept=0, colour="red", linewidth=1)
+
+```
+
+For the WT vs Rescue we can see the previous global offset is now fixed.
+
+```{r fig.width=5, fig.height=5}
+sf_normalised %>%
+  ggplot(aes(x=WT, y=KO)) +
+  geom_point(size=1) +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline(slope=1, intercept=0, colour="red", linewidth=1)
+
+```
+
+
+
+
