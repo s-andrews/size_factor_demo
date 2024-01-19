@@ -1,2 +1,2 @@
-# size_factor_demo
-Code from the Bitesize Bioinformatics tutorial on size factor normalisation in R
+# Size Factor Normalisation in R
+This repository contains the data and code used in the Bitesize Bioinformatics tutorial on performing size factor normalisation in R
